@@ -7,6 +7,7 @@ At each decoding step we compute logits twice:
         "cad"      -> empty context   (Shi et al., NAACL 2024)
         "shuffled" -> passages split on "\\n\\n" and shuffled (novel)
         "reversed" -> passages split on "\\n\\n" and reversed (shuffled-CD control)
+        "local_window" -> keep only the last N context tokens before the question
 and emit:  logits_final = logits_A - alpha * logits_B
 
 Core contrast rule (one line) follows Shi et al., "Trusting Your Evidence:
@@ -19,12 +20,12 @@ from __future__ import annotations
 
 import json
 import logging
-import random
 from typing import Any, Dict, List, Optional
 
 import torch
 from transformers import BatchEncoding, LogitsProcessor, LogitsProcessorList
 
+from context_utils import build_contrast_test_item
 from model_utils import tokenize
 
 logger = logging.getLogger(__name__)
@@ -140,15 +141,17 @@ class ContrastiveDecodingWrapper:
         cd_mode: str = "cad",
         cd_alpha: float = 1.0,
         cd_shuffle_seed: int = 42,
+        cd_window_tokens: Optional[int] = None,
         cd_log_trace: bool = False,
         cd_trace_path: Optional[str] = None,
     ) -> None:
-        if cd_mode not in {"cad", "shuffled", "reversed"}:
+        if cd_mode not in {"cad", "shuffled", "reversed", "local_window"}:
             raise ValueError(f"Unknown cd_mode: {cd_mode!r}")
         self.base_model = base_model
         self.cd_mode = cd_mode
         self.cd_alpha = cd_alpha
         self.cd_shuffle_seed = cd_shuffle_seed
+        self.cd_window_tokens = cd_window_tokens
         self.cd_log_trace = cd_log_trace
         self.cd_trace_path = cd_trace_path
         self._trace_fh = None
@@ -161,28 +164,26 @@ class ContrastiveDecodingWrapper:
 
     # ---- inputs ----------------------------------------------------------
 
-    def _build_contrast_test_item(self, test_item: Dict[str, Any]) -> Dict[str, Any]:
-        contrast = dict(test_item)
-        ctx = test_item.get("context", "") or ""
-        if self.cd_mode == "cad":
-            contrast["context"] = ""
-        elif self.cd_mode == "shuffled":
-            passages = ctx.split("\n\n")
-            if len(passages) > 1:
-                rng = random.Random(self.cd_shuffle_seed)
-                rng.shuffle(passages)
-            contrast["context"] = "\n\n".join(passages)
-        elif self.cd_mode == "reversed":
-            passages = ctx.split("\n\n")
-            contrast["context"] = "\n\n".join(reversed(passages))
-        return contrast
+    def _build_contrast_test_item(self, test_item: Dict[str, Any], data: Dict[str, Any]) -> Dict[str, Any]:
+        return build_contrast_test_item(
+            test_item,
+            cd_mode=self.cd_mode,
+            tokenizer=self.base_model.tokenizer,
+            cd_shuffle_seed=self.cd_shuffle_seed,
+            cd_window_tokens=self.cd_window_tokens,
+            data=data,
+            max_length=self.base_model.max_length,
+            generation_max_length=self.base_model.generation_max_length,
+            use_chat_template=self.base_model.use_chat_template,
+            system_message=self.base_model.system_message,
+        )
 
     def prepare_inputs(self, test_item: Dict[str, Any], data: Dict[str, Any]) -> BatchEncoding:
         # Pass A — exactly HELMET's normal tokenization
         inputs_a = self.base_model.prepare_inputs(test_item, data)
 
         # Pass B — re-tokenize with contrast context via the same helper
-        contrast_item = self._build_contrast_test_item(test_item)
+        contrast_item = self._build_contrast_test_item(test_item, data)
         inputs_b = tokenize(
             contrast_item,
             data,

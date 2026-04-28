@@ -9,6 +9,8 @@ from transformers import PreTrainedTokenizer, set_seed
 from tqdm import tqdm
 from tqdm.contrib.concurrent import thread_map
 
+from context_utils import count_tokens, keep_first_tokens
+
 import logging
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
                     datefmt='%m/%d/%Y %H:%M:%S')
@@ -831,16 +833,8 @@ def tokenize(
     tokenized_input = format_input(sample)
     if tokenized_input.input_ids.size(1) > max_length - generation_max_length - buffer:
         truncate_length = tokenized_input.input_ids.size(1) - (max_length - generation_max_length - buffer)
-
-        # handle non-fast hf tokenizers (e.g., phi-3-small)
-        if isinstance(tokenizer, PreTrainedTokenizer) and not tokenizer.is_fast:
-            context_tokens = tokenizer(sample["context"])
-            new_context = tokenizer.decode(context_tokens["input_ids"][:-truncate_length])
-        else:
-            context_tokens = tokenizer([sample["context"]], return_offsets_mapping=True)
-            new_context = sample["context"][:context_tokens["offset_mapping"][0][-truncate_length][0]]
-
-        sample["context"] = new_context
+        context_token_count = count_tokens(sample["context"], tokenizer)
+        sample["context"] = keep_first_tokens(sample["context"], tokenizer, context_token_count - truncate_length)
         tokenized_input = format_input(sample)
     return tokenized_input
 
@@ -1315,13 +1309,15 @@ def load_LLM(args):
             trace_path = os.path.join(args.output_dir, "cd_trace.jsonl")
         logger.info(
             f"Wrapping HFModel with ContrastiveDecodingWrapper "
-            f"(mode={cd_mode}, alpha={args.cd_alpha}, seed={args.cd_shuffle_seed})"
+            f"(mode={cd_mode}, alpha={args.cd_alpha}, seed={args.cd_shuffle_seed}, "
+            f"window={getattr(args, 'cd_window_tokens', None)})"
         )
         model = ContrastiveDecodingWrapper(
             model,
             cd_mode=cd_mode,
             cd_alpha=args.cd_alpha,
             cd_shuffle_seed=args.cd_shuffle_seed,
+            cd_window_tokens=getattr(args, "cd_window_tokens", None),
             cd_log_trace=getattr(args, "cd_log_trace", False),
             cd_trace_path=trace_path,
         )

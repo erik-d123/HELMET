@@ -18,12 +18,45 @@ from data import (
     load_data,
     TestItemDataset,
 )
+from context_utils import apply_rag_context_mode, compute_rag_example_metadata
 
 import logging
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
                     datefmt='%m/%d/%Y %H:%M:%S')
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+
+RAG_DATASETS = {"nq", "triviaqa", "hotpotqa", "popqa"}
+
+
+def is_rag_dataset(dataset: str) -> bool:
+    return any(name in dataset for name in RAG_DATASETS)
+
+
+def parse_analysis_windows(window_arg: str):
+    return [int(part.strip()) for part in window_arg.split(",") if part.strip()]
+
+
+def get_method_name(args):
+    if getattr(args, "context_mode", "off") == "oracle_passages_only":
+        return "oracle_passages_only"
+    if getattr(args, "context_mode", "off") == "truncate_last":
+        return f"truncate_last_{args.context_window_tokens // 1000}k"
+    if getattr(args, "cd_mode", "off") == "local_window":
+        return f"local_window_{args.cd_window_tokens // 1000}k"
+    if getattr(args, "cd_mode", "off") != "off":
+        return args.cd_mode
+    return "vanilla"
+
+
+def get_primary_metric_name(dataset: str, metrics: Dict[str, Any]) -> Optional[str]:
+    if is_rag_dataset(dataset) and "substring_exact_match" in metrics:
+        return "substring_exact_match"
+    for preferred in ["substring_exact_match", "exact_match", "ruler_recall"]:
+        if preferred in metrics:
+            return preferred
+    return next(iter(metrics), None)
 
 
 def run_test(args, model, dataset, test_file, demo_file):
@@ -42,6 +75,29 @@ def run_test(args, model, dataset, test_file, demo_file):
     random.seed(args.seed)
     data = load_data(args, dataset, test_file, demo_file)
     logger.info(f"loaded {len(data['data'])} samples from {dataset}")
+    method_name = get_method_name(args)
+    analysis_windows = parse_analysis_windows(getattr(args, "analysis_window_tokens", "2000,8000"))
+    analysis_samples = None
+
+    if is_rag_dataset(dataset):
+        analysis_samples = [dict(sample) for sample in data["data"]]
+        working_samples = analysis_samples
+        if getattr(args, "context_mode", "off") != "off":
+            working_samples = [
+                apply_rag_context_mode(
+                    sample,
+                    context_mode=args.context_mode,
+                    tokenizer=model.tokenizer,
+                    context_window_tokens=getattr(args, "context_window_tokens", None),
+                    data=data,
+                    max_length=model.max_length,
+                    generation_max_length=model.generation_max_length,
+                    use_chat_template=model.use_chat_template,
+                    system_message=model.system_message,
+                )
+                for sample in analysis_samples
+            ]
+        data["data"] = working_samples
 
     dataloader = DataLoader(
         TestItemDataset(data, model, model.tokenizer),
@@ -116,6 +172,25 @@ def run_test(args, model, dataset, test_file, demo_file):
         metrics["input_len"].append(output["input_len"])
         metrics["output_len"].append(output["output_len"])
         result = {**test_item, **output}
+        result["dataset"] = dataset
+        result["method"] = method_name
+        result["length"] = args.input_max_length
+        primary_metric = get_primary_metric_name(dataset, mets)
+        result["primary_metric_name"] = primary_metric
+        result["primary_score"] = mets.get(primary_metric) if primary_metric is not None else None
+        if analysis_samples is not None:
+            result.update(
+                compute_rag_example_metadata(
+                    analysis_samples[idx],
+                    data=data,
+                    tokenizer=model.tokenizer,
+                    max_length=model.max_length,
+                    generation_max_length=model.generation_max_length,
+                    use_chat_template=model.use_chat_template,
+                    system_message=model.system_message,
+                    trailing_window_tokens=analysis_windows,
+                )
+            )
         result.pop("context", None)
         result.pop("input_ids", None)
         if input_text is None:
@@ -164,6 +239,7 @@ def run_test(args, model, dataset, test_file, demo_file):
         "metrics": metrics,
         "averaged_metrics": averaged_metrics,
         "throughput": len(results) / (end_time - start_time),
+        "method": method_name,
     }
     if not args.no_cuda:
         output["memory_usage"] = mem_usage
@@ -232,4 +308,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

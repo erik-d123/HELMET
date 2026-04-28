@@ -60,16 +60,27 @@ def parse_arguments():
 
     # contrastive-decoding settings (cd_wrapper.py)
     parser.add_argument("--cd_mode", type=str, default="off",
-                        choices=["off", "cad", "shuffled", "reversed"],
+                        choices=["off", "cad", "shuffled", "reversed", "local_window"],
                         help="contrastive decoding mode. 'off' is the vanilla baseline.")
     parser.add_argument("--cd_alpha", type=float, default=1.0,
                         help="contrast strength: logits = A - alpha * B")
     parser.add_argument("--cd_shuffle_seed", type=int, default=42,
                         help="seed for passage shuffle in cd_mode=shuffled")
+    parser.add_argument("--cd_window_tokens", type=int, default=None,
+                        help="when cd_mode=local_window, keep only the last N context tokens in Pass B")
     parser.add_argument("--cd_log_trace", action="store_true",
                         help="dump per-step logits_A/B/final top-5 to cd_trace.jsonl")
     parser.add_argument("--cd_trace_path", type=str, default=None,
                         help="path for cd trace output (defaults to output_dir/cd_trace.jsonl)")
+
+    # context-only controls for RAG baselines
+    parser.add_argument("--context_mode", type=str, default="off",
+                        choices=["off", "truncate_last", "oracle_passages_only"],
+                        help="RAG context transform applied before tokenization")
+    parser.add_argument("--context_window_tokens", type=int, default=None,
+                        help="when context_mode=truncate_last, keep only the last N context tokens")
+    parser.add_argument("--analysis_window_tokens", type=str, default="2000,8000",
+                        help="comma-separated trailing context windows for per-example RAG analysis")
 
     # misc
     parser.add_argument("--debug", action="store_true", help="for debugging")
@@ -89,5 +100,11 @@ def parse_arguments():
     if not args.do_sample and args.temperature != 0.0:
         args.temperature = 0.0
         logger.info("overwriting temperature to 0.0 since do_sample is False")
+
+    if args.cd_mode == "local_window" and (args.cd_window_tokens is None or args.cd_window_tokens <= 0):
+        parser.error("--cd_mode local_window requires --cd_window_tokens > 0")
+
+    if args.context_mode == "truncate_last" and (args.context_window_tokens is None or args.context_window_tokens <= 0):
+        parser.error("--context_mode truncate_last requires --context_window_tokens > 0")
 
     return args

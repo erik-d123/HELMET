@@ -95,3 +95,72 @@ python eval.py --config configs/cd_rag.yaml --max_test_samples 10 \
 ## Phases C–D
 
 Added as those phases start — see the project plan for the expected file layout.
+
+## COS484 Local-Window Extension
+
+The `codex/cos484-local-window-cd` branch adds the full class-project harness for:
+
+- vanilla **Recall** + **RAG** reproduction at `8K`, `32K`, and `64K`
+- RAG-only decoding/control methods:
+  - `vanilla`
+  - `cad`
+  - `local_window` with `--cd_window_tokens {2000,8000}`
+  - `truncate_last` with `--context_window_tokens {2000,8000}`
+  - `oracle_passages_only`
+  - `shuffled` / `reversed` at `32K`
+
+### New configs
+
+- `configs/cos484_recall_{8k,32k,64k}.yaml`
+- `configs/cos484_rag_{8k,32k,64k}.yaml`
+
+These pin the exact HELMET Recall/RAG datasets for the three required lengths.
+
+### New CLI options
+
+- `--cd_mode local_window`
+- `--cd_window_tokens N`
+- `--context_mode {off,truncate_last,oracle_passages_only}`
+- `--context_window_tokens N`
+- `--analysis_window_tokens 2000,8000`
+
+`local_window` uses the **visible Pass-A context after normal HELMET truncation**, then keeps only the last `N` context tokens for Pass B.
+
+### New scripts
+
+- `bash scripts/cos484_smoke.sh`
+  - 32K RAG smoke run for vanilla / CAD / local-window / truncation / oracle
+- `bash scripts/cos484_position_diag.sh`
+  - vanilla 32K RAG pilot + diagnostic summary
+- `bash scripts/cos484_alpha_sweep.sh`
+  - per-method alpha sweep for `cad`, `local_window_2k`, `local_window_8k`
+- `bash scripts/cos484_recall_vanilla.sh`
+  - vanilla Recall curve at 8K / 32K / 64K
+- `bash scripts/cos484_rag_matrix.sh`
+  - full RAG matrix across lengths and methods
+- `python scripts/cos484_analyze.py --input_dir output/Llama-3.1-8B-Instruct --output_dir analysis/cos484`
+  - macro-average summaries with bootstrap 95% CI
+  - delta-vs-vanilla summaries
+  - 32K evidence-position diagnostic
+  - plots when `matplotlib` is available
+
+### Per-example metadata
+
+RAG outputs now log:
+
+- `dataset`
+- `method`
+- `length`
+- `primary_metric_name`
+- `primary_score`
+- `first_answer_passage_rank`
+- `answer_position_bucket`
+- `gold_inside_window_2000`
+- `gold_inside_window_8000`
+
+This is the metadata consumed by `scripts/cos484_analyze.py`.
+
+### Hardware note
+
+- `64K` CD runs should use an `A100-80GB` / `gpu80` node when possible.
+- If `gpu80` is unavailable, keep the three-point vanilla Recall/RAG reproduction curve and drop `64K` CD methods first.
