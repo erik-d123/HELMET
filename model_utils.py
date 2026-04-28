@@ -1302,4 +1302,28 @@ def load_LLM(args):
         **kwargs,
     )
 
+    cd_mode = getattr(args, "cd_mode", "off")
+    if cd_mode != "off":
+        if model_cls is not HFModel:
+            raise ValueError(
+                f"--cd_mode={cd_mode} requires the HF path; got {model_cls.__name__}. "
+                "Remove --use_vllm / --use_sglang / --use_tgi_serving / --use_vllm_serving."
+            )
+        from cd_wrapper import ContrastiveDecodingWrapper
+        trace_path = getattr(args, "cd_trace_path", None)
+        if getattr(args, "cd_log_trace", False) and trace_path is None:
+            trace_path = os.path.join(args.output_dir, "cd_trace.jsonl")
+        logger.info(
+            f"Wrapping HFModel with ContrastiveDecodingWrapper "
+            f"(mode={cd_mode}, alpha={args.cd_alpha}, seed={args.cd_shuffle_seed})"
+        )
+        model = ContrastiveDecodingWrapper(
+            model,
+            cd_mode=cd_mode,
+            cd_alpha=args.cd_alpha,
+            cd_shuffle_seed=args.cd_shuffle_seed,
+            cd_log_trace=getattr(args, "cd_log_trace", False),
+            cd_trace_path=trace_path,
+        )
+
     return model

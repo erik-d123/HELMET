@@ -58,6 +58,19 @@ def parse_arguments():
     parser.add_argument("--rope_theta", type=int, default=None, help="override rope theta")
     parser.add_argument("--thinking", action="store_true", help="for reasoning models (e.g., Deepseek-r1), when this is set, we allow the model to generate an additional 32k tokens and exclude all texts between <think>*</think> from the output for evaluation")
 
+    # contrastive-decoding settings (cd_wrapper.py)
+    parser.add_argument("--cd_mode", type=str, default="off",
+                        choices=["off", "cad", "shuffled", "reversed"],
+                        help="contrastive decoding mode. 'off' is the vanilla baseline.")
+    parser.add_argument("--cd_alpha", type=float, default=1.0,
+                        help="contrast strength: logits = A - alpha * B")
+    parser.add_argument("--cd_shuffle_seed", type=int, default=42,
+                        help="seed for passage shuffle in cd_mode=shuffled")
+    parser.add_argument("--cd_log_trace", action="store_true",
+                        help="dump per-step logits_A/B/final top-5 to cd_trace.jsonl")
+    parser.add_argument("--cd_trace_path", type=str, default=None,
+                        help="path for cd trace output (defaults to output_dir/cd_trace.jsonl)")
+
     # misc
     parser.add_argument("--debug", action="store_true", help="for debugging")
     parser.add_argument("--count_tokens", action="store_true", help="instead of running generation, just count the number of tokens (only for HF models not API)")

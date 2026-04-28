@@ -44,6 +44,54 @@ Results land in `output/Llama-3.1-8B-Instruct/*.json.score`.
 
 **Expected:** substring-EM within ~2 pts of HELMET's published Llama-3.1-8B-Instruct RAG number (see HELMET's public [results spreadsheet](https://docs.google.com/spreadsheets/d/1LBt6dP4UwZwU_CjoYhyAd_rjKhQLvo0Gq4cYUnpi_CA/edit?usp=sharing)).
 
-## Phases B–D
+## Phase B — CAD implementation + α sweep + CAD vs vanilla @ 32K
 
-Will be added as those phases start. The `cd_wrapper.py` module, `configs/cd_*.yaml`, and `scripts/run_cd_slurm.sh` are not present yet — see the [project plan](../rustling-bouncing-sunbeam.md) for the expected file layout.
+### Wrapper no-op regression (sanity check)
+
+Run the baseline with `--cd_mode off` through the wrapper path to confirm the wrapper introduces no regression on the same examples:
+```bash
+python eval.py --config configs/rag.yaml \
+    --model_name_or_path meta-llama/Llama-3.1-8B-Instruct \
+    --tag phaseB_nop --input_max_length 32768 --max_test_samples 50 \
+    --cd_mode off --use_chat_template False
+```
+Expected: same metric scores (within float noise) as Phase A.
+
+### α sweep (pick α for main runs)
+
+```bash
+sbatch scripts/run_cd_alpha_sweep.sh    # CAD on RAG @ 32K, n=100, α ∈ {0.5, 1.0, 1.5}
+```
+
+### Main Phase B gate: CAD vs vanilla on RAG @ 32K, full test set
+
+```bash
+ALPHA=1.0 sbatch scripts/run_cd_phaseB.sh
+```
+
+**Gate:** bootstrap 95% CI for (CAD − vanilla) at 32K does not cross zero (direction irrelevant — even a significantly-negative effect is publishable as a null-result study).
+
+### Trace-log smoke test
+
+```bash
+python eval.py --config configs/cd_rag.yaml \
+    --model_name_or_path meta-llama/Llama-3.1-8B-Instruct \
+    --tag phaseB_smoke --input_max_length 32768 --max_test_samples 10 \
+    --cd_mode cad --cd_alpha 1.0 --cd_log_trace --use_chat_template False
+```
+Then spot-check `output/Llama-3.1-8B-Instruct/cd_trace.jsonl`:
+- `logits_A_top ≠ logits_B_top` on most steps (non-trivial contrast)
+- At least one example differs from the vanilla output
+
+### Variant differentiation
+
+```bash
+python eval.py --config configs/cd_rag.yaml --max_test_samples 10 \
+    --cd_mode shuffled --cd_log_trace --tag phaseB_shuf_smoke --input_max_length 32768 \
+    --model_name_or_path meta-llama/Llama-3.1-8B-Instruct --use_chat_template False
+```
+`logits_B_top` from shuffled mode should differ from CAD mode on matched steps.
+
+## Phases C–D
+
+Added as those phases start — see the project plan for the expected file layout.
