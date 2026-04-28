@@ -1,0 +1,64 @@
+name: Lightweight CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "feat/**"
+      - "fix/**"
+      - "perf/**"
+      - "docs/**"
+      - "ops/**"
+      - "test/**"
+      - "chore/**"
+
+jobs:
+  lightweight-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check whitespace errors
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff --check origin/${{ github.base_ref }}...HEAD
+          else
+            git diff --check HEAD~1..HEAD
+          fi
+
+      - name: Check Python syntax
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import py_compile
+
+          skip_dirs = {".git", "env", "venv", ".venv", "__pycache__", "output", "data"}
+          for path in sorted(Path(".").rglob("*.py")):
+              if any(part in skip_dirs for part in path.parts):
+                  continue
+              py_compile.compile(str(path), doraise=True)
+          PY
+
+      - name: Check shell script syntax
+        shell: bash
+        run: |
+          while IFS= read -r script; do
+            bash -n "$script"
+          done < <(find scripts -type f \( -name "*.sh" -o -name "*.slurm" \) | sort)
+
+      - name: Run lightweight unit tests if present
+        run: |
+          if [ -d tests ]; then
+            python -m unittest discover -s tests -p "test*.py"
+          else
+            echo "No tests directory present."
+          fi

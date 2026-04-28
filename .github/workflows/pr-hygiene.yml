@@ -1,0 +1,79 @@
+name: PR Hygiene
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+jobs:
+  pr-and-commit-hygiene:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate PR title and body
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import sys
+
+          title = os.environ.get("PR_TITLE", "")
+          body = os.environ.get("PR_BODY", "") or ""
+          title_re = re.compile(r"^\((feat|fix|perf|docs|ops|test|chore)\)\s+\S")
+          required_sections = [
+              "## What does this PR do?",
+              "## Why?",
+              "## How to test",
+              "## Checklist",
+          ]
+
+          errors = []
+          if not title_re.match(title):
+              errors.append("PR title must start with one of: (feat), (fix), (perf), (docs), (ops), (test), (chore).")
+          for section in required_sections:
+              if section not in body:
+                  errors.append(f"PR body is missing required section: {section}")
+
+          if errors:
+              print("\n".join(f"- {error}" for error in errors))
+              sys.exit(1)
+          PY
+
+      - name: Validate commit message prefixes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
+
+          base = os.environ["BASE_SHA"]
+          head = os.environ["HEAD_SHA"]
+          allowed = re.compile(r"^\((feat|fix|perf|docs|ops|test|chore)\)\s+\S")
+          subjects = subprocess.check_output(
+              ["git", "log", "--format=%s", f"{base}..{head}"],
+              text=True,
+          ).splitlines()
+
+          bad = [
+              subject for subject in subjects
+              if not allowed.match(subject) and not subject.startswith("Merge ")
+          ]
+          if bad:
+              print("Commit subjects must start with one of: (feat), (fix), (perf), (docs), (ops), (test), (chore).")
+              for subject in bad:
+                  print(f"- {subject}")
+              sys.exit(1)
+          PY
