@@ -7,8 +7,14 @@ import csv
 import glob
 import json
 import os
+import sys
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from analysis_utils import bootstrap_macro_average, bootstrap_macro_delta
 

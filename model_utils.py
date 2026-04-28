@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import importlib.util
 from typing import Optional, List, Dict, Callable, Any
 import functools
 
@@ -16,6 +17,10 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s
                     datefmt='%m/%d/%Y %H:%M:%S')
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+
+def flash_attention_2_available() -> bool:
+    return importlib.util.find_spec("flash_attn") is not None
 
 
 def format_chat(
@@ -873,14 +878,31 @@ class HFModel(LLM):
         from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
         model_kwargs = {}
         from pkg_resources import parse_version
+        attn_implementation = kwargs.get("attn_implementation")
+        flash_attention_supported = flash_attention_2_available()
         if parse_version(transformers.__version__) <= parse_version("4.34.1"):
-            model_kwargs["use_flash_attention_2"] = True
+            if flash_attention_supported:
+                model_kwargs["use_flash_attention_2"] = True
+            else:
+                logger.info("FlashAttention2 is unavailable; falling back to the default HF attention backend")
         else:
-            model_kwargs["attn_implementation"] = kwargs.get("attn_implementation", "flash_attention_2")
+            default_attn = "flash_attention_2" if flash_attention_supported else "sdpa"
+            model_kwargs["attn_implementation"] = attn_implementation or default_attn
 
         FLASH_ATTN_NOT_SUPPORTED = ["recurrentgemma", "yarn"]
         if any([x in model_name.lower() for x in FLASH_ATTN_NOT_SUPPORTED]):
             model_kwargs = {}
+        if attn_implementation is not None:
+            if attn_implementation == "flash_attention_2" and not flash_attention_supported:
+                raise ImportError(
+                    "FlashAttention2 was requested via --attn_implementation flash_attention_2, "
+                    "but the flash_attn package is not installed in this environment."
+                )
+            if attn_implementation != "flash_attention_2":
+                model_kwargs.pop("use_flash_attention_2", None)
+            model_kwargs["attn_implementation"] = attn_implementation
+            if attn_implementation == "flash_attention_2":
+                model_kwargs["use_flash_attention_2"] = True
 
         self.max_length = max_length
 
@@ -1280,6 +1302,8 @@ def load_LLM(args):
             kwargs["torch_dtype"] = torch.float32
         if args.rope_theta is not None:
             kwargs["rope_theta"] = args.rope_theta
+        if args.attn_implementation is not None:
+            kwargs["attn_implementation"] = args.attn_implementation
 
     logger.info(f"Loading model {args.model_name_or_path} with {model_cls.__name__}")
     model = model_cls(

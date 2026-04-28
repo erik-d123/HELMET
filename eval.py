@@ -5,6 +5,7 @@ import re
 import random
 import json
 import time
+from typing import Any, Dict, Optional
 
 from tqdm import tqdm
 import numpy as np
@@ -281,6 +282,9 @@ def main():
         args.generation_max_length = gen_length
         model.max_length = max_length
         model.generation_max_length = gen_length
+        if hasattr(model, "base_model"):
+            model.base_model.max_length = max_length
+            model.base_model.generation_max_length = gen_length
 
         try:
             output_path = run_test(args, model, dataset, test_file, demo_file)

@@ -81,10 +81,21 @@ def load_qa(dataset, path, demo_path, max_test_samples=None, popularity_threshol
 
     key = "id" if "id" in data.column_names else "question"
     if max_test_samples is not None:
-        # some datasets do not have id (e.g., nq), so we assume unique questions
-        keys = set(data[key])
-        keys = random.sample(sorted(keys), min(max_test_samples, len(keys)))
-        data = data.filter(lambda x: x[key] in keys)
+        # Some QA files contain repeated rows for the same question/id.
+        # Sample unique keys, then keep a single representative row per key so
+        # max_test_samples reflects the actual number of evaluated examples.
+        unique_keys = sorted(set(data[key]))
+        sampled_keys = set(random.sample(unique_keys, min(max_test_samples, len(unique_keys))))
+        indices_to_keep = []
+        seen = set()
+        for idx, sample_key in enumerate(data[key]):
+            if sample_key not in sampled_keys or sample_key in seen:
+                continue
+            indices_to_keep.append(idx)
+            seen.add(sample_key)
+            if len(indices_to_keep) >= len(sampled_keys):
+                break
+        data = data.select(indices_to_keep)
 
     # demo_template = "Document (Title: {gold_title}): {gold_doc}\n\nQuestion: {question}\nAnswer: {answer}"
     demo_template = "{documents}\n\nQuestion: {question}\nAnswer: {answer}"

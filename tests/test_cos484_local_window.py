@@ -1,4 +1,9 @@
+import importlib
+import types
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 from analysis_utils import bootstrap_macro_average, bootstrap_macro_delta
 from context_utils import (
@@ -142,6 +147,35 @@ class Cos484LocalWindowTests(unittest.TestCase):
         self.assertEqual(summary["point_estimate"], 0.0)
         self.assertEqual(summary["ci_low"], 0.0)
         self.assertEqual(summary["ci_high"], 0.0)
+
+    def test_parse_arguments_accepts_attention_override(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            config_path.write_text("model_name_or_path: meta-llama/Llama-3.1-8B-Instruct\n")
+            argv = sys.argv
+            saved_yaml = sys.modules.get("yaml")
+            try:
+                fake_yaml = types.ModuleType("yaml")
+                fake_yaml.safe_load = lambda fh: {
+                    "model_name_or_path": "meta-llama/Llama-3.1-8B-Instruct"
+                }
+                sys.modules["yaml"] = fake_yaml
+                arguments = importlib.import_module("arguments")
+                sys.argv = [
+                    "prog",
+                    "--config",
+                    str(config_path),
+                    "--attn_implementation",
+                    "sdpa",
+                ]
+                args = arguments.parse_arguments()
+            finally:
+                sys.argv = argv
+                if saved_yaml is None:
+                    sys.modules.pop("yaml", None)
+                else:
+                    sys.modules["yaml"] = saved_yaml
+        self.assertEqual(args.attn_implementation, "sdpa")
 
 
 if __name__ == "__main__":

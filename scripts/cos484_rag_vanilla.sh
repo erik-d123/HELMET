@@ -34,8 +34,8 @@ fi
 
 for LENGTH in $LENGTHS; do
   python eval.py \
-    --config "configs/cos484_recall_${LENGTH}.yaml" \
+    --config "configs/cos484_rag_${LENGTH}.yaml" \
     "${BASE_ARGS[@]}" \
-    --tag "cos484_recall_vanilla_${LENGTH}" \
+    --tag "cos484_rag_vanilla_${LENGTH}" \
     --cd_mode off
 done
